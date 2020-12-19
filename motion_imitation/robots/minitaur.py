@@ -245,14 +245,15 @@ class Minitaur(object):
     self.ReceiveObservation()
     self._state_action_counter += 1
 
-  def Step(self, action):
+  def Step(self, action, control_mode=None):
     """Steps simulation."""
     if self._enable_action_filter:
       action = self._FilterAction(action)
-
+    if control_mode==None:
+      control_mode = self._motor_control_mode
     for i in range(self._action_repeat):
       proc_action = self.ProcessAction(action, i)
-      self._StepInternal(proc_action, self._motor_control_mode)
+      self._StepInternal(proc_action, control_mode)
       self._step_counter += 1
 
     self._last_action = action
@@ -680,23 +681,25 @@ class Minitaur(object):
     """Compute the Jacobian for a given leg."""
     # Does not work for Minitaur which has the four bar mechanism for now.
     assert len(self._foot_link_ids) == self.num_legs
-    return kinematics.compute_jacobian(
+    full_jacobian = kinematics.compute_jacobian(
         robot=self,
         link_id=self._foot_link_ids[leg_id],
     )
+    motors_per_leg = self.num_motors // self.num_legs
+    com_dof = 6
+    return full_jacobian[com_dof + leg_id * motors_per_leg:com_dof +
+                         (leg_id + 1) * motors_per_leg]
 
   def MapContactForceToJointTorques(self, leg_id, contact_force):
     """Maps the foot contact force to the leg joint torques."""
     jv = self.ComputeJacobian(leg_id)
-    all_motor_torques = np.matmul(contact_force, jv)
-    motor_torques = {}
+    motor_torques_list = np.matmul(contact_force, jv)
+    motor_torques_dict = {}
     motors_per_leg = self.num_motors // self.num_legs
-    com_dof = 6
-    for joint_id in range(leg_id * motors_per_leg,
-                          (leg_id + 1) * motors_per_leg):
-      motor_torques[joint_id] = all_motor_torques[
-          com_dof + joint_id] * self._motor_direction[joint_id]
-    return motor_torques
+    for torque_id, joint_id in enumerate(
+        range(leg_id * motors_per_leg, (leg_id + 1) * motors_per_leg)):
+      motor_torques_dict[joint_id] = motor_torques_list[torque_id]
+    return motor_torques_dict
 
   def GetFootContacts(self):
     """Get minitaur's foot contact situation with the ground.
